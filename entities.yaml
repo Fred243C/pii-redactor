@@ -1,0 +1,9 @@
+# entities.yaml
+entities:
+  - PERSON
+  - EMAIL_ADDRESS
+  - PHONE_NUMBER
+  - LOCATION
+  - DATE_TIME
+  - IE_PPS_NUMBER
+  - IBAN_CODE
