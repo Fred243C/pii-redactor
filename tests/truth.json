@@ -1,0 +1,12 @@
+{
+  "sample1.txt": [
+    {"type": "PERSON",        "text": "Fred Banda"},
+    {"type": "DATE_TIME",     "text": "12/03/1985"},
+    {"type": "IE_PPS_NUMBER", "text": "1234567AB"},
+    {"type": "PHONE_NUMBER",  "text": "087 123 4567"},
+    {"type": "EMAIL_ADDRESS", "text": "fred.banda@example.com"},
+    {"type": "LOCATION",      "text": "Santry"},
+    {"type": "LOCATION",      "text": "Dublin 9"}
+
+  ]
+}
