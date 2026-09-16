@@ -1,18 +1,22 @@
 
 from __future__ import annotations
-
+ 
 import csv
 import datetime as dt
 import getpass
 import re
 from pathlib import Path
-
+ 
 from detector import HAVE_DOCX, HAVE_PDF, sha256
 from recognisers import Detection
-
+ 
 PLACEHOLDER = "[REDACTED]"
-
-
+ 
+# How a redaction looks in the output file.
+#   "bar"  - solid black block, the traditional look of a redacted document
+#   "text" - the words [REDACTED]
+# This is cosmetic only. In both styles the underlying text is deleted, not
+# covered: see the note in _redact_pdf below.
 REDACTION_STYLE = "bar"
  
 _BLOCK = "\u2588"      # FULL BLOCK, the character that draws a solid bar
@@ -26,13 +30,11 @@ def _replacement(value: str) -> str:
     # replaced, so the layout of the page does not shift.
     return _BLOCK * max(len(value), 3)
  
-
-
-
+ 
 class RedactionError(Exception):
     pass
-
-
+ 
+ 
 def _output_path(source: Path, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / f"{source.stem}_REDACTED{source.suffix}"
@@ -40,13 +42,13 @@ def _output_path(source: Path, output_dir: Path) -> Path:
         stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         target = output_dir / f"{source.stem}_REDACTED_{stamp}{source.suffix}"
     return target
-
-
+ 
+ 
 def _redact_pdf(source: Path, target: Path, accepted: list[Detection]) -> None:
     if not HAVE_PDF:
         raise RedactionError("PyMuPDF is not installed, so PDF files cannot be redacted.")
     import fitz
-
+ 
     wanted = {d.text for d in accepted if d.text.strip()}
     doc = fitz.open(source)
     try:
@@ -57,30 +59,33 @@ def _redact_pdf(source: Path, target: Path, accepted: list[Detection]) -> None:
                         # fill paints the box; passing no text leaves it solid.
                         page.add_redact_annot(rect, fill=(0, 0, 0))
                     else:
-                        page.add_redact_annot(rect, text=PLACEHOLDER, fontsize=8)
-            # apply_redactions removes the underlying text object. Drawing a
-            # black rectangle would leave the text recoverable by copy-paste,
-            # which is the mistake behind several published redaction failures.
+                        page.add_redact_annot(rect, text=PLACEHOLDER,
+                                              fontsize=8, fill=(1, 1, 1))
+            # apply_redactions is what actually deletes the text object. The
+            # black box on its own is only paint: drawing a rectangle with
+            # draw_rect and skipping this call leaves the text underneath,
+            # selectable and copyable. That is the mistake behind several
+            # published redaction failures.
             page.apply_redactions()
         doc.save(target, garbage=4, deflate=True)
     finally:
         doc.close()
-
-
+ 
+ 
 def _redact_docx(source: Path, target: Path, accepted: list[Detection]) -> None:
     if not HAVE_DOCX:
         raise RedactionError("python-docx is not installed, so Word files cannot be redacted.")
     import docx
-
+ 
     wanted = sorted({d.text for d in accepted if d.text.strip()}, key=len, reverse=True)
     document = docx.Document(str(source))
-
+ 
     def scrub(paragraph):
         for run in paragraph.runs:
             for value in wanted:
                 if value in run.text:
-                    run.text = run.text.replace(value, PLACEHOLDER)
-
+                    run.text = run.text.replace(value, _replacement(value))
+ 
     for paragraph in document.paragraphs:
         scrub(paragraph)
     for table in document.tables:
@@ -89,16 +94,18 @@ def _redact_docx(source: Path, target: Path, accepted: list[Detection]) -> None:
                 for paragraph in cell.paragraphs:
                     scrub(paragraph)
     document.save(target)
-
-
+ 
+ 
 def _redact_email(source: Path, target: Path, accepted: list[Detection]) -> None:
     wanted = sorted({d.text for d in accepted if d.text.strip()}, key=len, reverse=True)
     raw = source.read_text(errors="replace")
     for value in wanted:
+        # Email is plain text, where a bar of blocks reads poorly and can break
+        # header parsing, so the word form is always used here.
         raw = raw.replace(value, PLACEHOLDER)
     target.write_text(raw)
-
-
+ 
+ 
 def redact(source: Path, output_dir: Path, accepted: list[Detection]) -> Path:
     """Write a redacted copy and return its path. Deletes the copy on failure."""
     target = _output_path(source, output_dir)
@@ -117,8 +124,8 @@ def redact(source: Path, output_dir: Path, accepted: list[Detection]) -> Path:
             target.unlink()      # fail closed
         raise
     return target
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # Audit log
 # --------------------------------------------------------------------------
@@ -131,8 +138,8 @@ AUDIT_COLUMNS = [
     "entity_type", "page_number", "start_offset", "end_offset",
     "confidence", "source_engine", "action_taken",
 ]
-
-
+ 
+ 
 def write_audit(log_path: Path,
                 source: Path,
                 output: Path | None,
@@ -144,7 +151,7 @@ def write_audit(log_path: Path,
     user = getpass.getuser()
     src_hash = sha256(source)
     out_hash = sha256(output) if output and output.exists() else ""
-
+ 
     with open(log_path, "a", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         if new_file:
@@ -161,3 +168,4 @@ def write_audit(log_path: Path,
                 f"{d.score:.2f}", d.source,
                 "redacted" if d.accepted else "rejected",
             ])
+ 
